@@ -101,22 +101,23 @@ class ObjC_Tests: XCTestCase {
         let outputReader = OutputReaderPlugin()
         analytics.analytics.add(plugin: outputReader)
         
-        analytics.addSourceMiddleware { event in
+        let sourceM = SEGBlockMiddlewareBase { context, next in
             print("source enrichment applied")
             sourceHit = true
-            return event
+            if context.payload.isKind(of: SEGIdentifyPayload.self) {
+                let identify = context.payload as! SEGIdentifyPayload
+                identify.userId = "batman2"
+            }
+            next(context)
         }
+        analytics.addSourceMiddleware(middleware: sourceM )
         
-        analytics.addDestinationMiddleware(middleware: { event in
+        let destM = SEGBlockMiddlewareBase { context, next in
             print("destination enrichment applied")
             destHit = true
-            return event
-        }, destinationKey: "Segment.io")
-        
-        //analytics.add(enrichment: sourceEnrichment)
-        
-        //let segment = analytics.find(pluginType: SegmentDestination.self)
-        //segment?.add(enrichment: destEnrichment)
+            next(context)
+        }
+        analytics.addDestinationMiddleware(middleware: destM, destinationKey: "Segment.io")
         
         waitUntilStarted(analytics: analytics.analytics)
         
@@ -131,7 +132,7 @@ class ObjC_Tests: XCTestCase {
         
         let lastEvent = outputReader.lastEvent
         XCTAssertTrue(lastEvent is IdentifyEvent)
-        XCTAssertTrue((lastEvent as! IdentifyEvent).userId == "batman")
+        XCTAssertTrue((lastEvent as! IdentifyEvent).userId == "batman2")
     }
 }
 

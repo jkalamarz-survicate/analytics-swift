@@ -1,5 +1,5 @@
 //
-//  ObjCPlugin.swift
+//  ObjCPluginSupport.swift
 //  
 //
 //  Created by Brandon Sneed on 3/14/23.
@@ -10,50 +10,63 @@
 import Foundation
 import Sovran
 
+@objc
+public protocol SEGMiddleware {
+    func context(_ context: SEGContext, next: @escaping ((SEGContext) -> Void))
+}
+
+@objc
+public class SEGBlockMiddlewareBase: NSObject, SEGMiddleware {
+    let block: (SEGContext, @escaping (SEGContext) -> Void) -> Void
+    
+    public init(block: @escaping (SEGContext, @escaping (SEGContext) -> Void) -> Void) {
+        self.block = block
+    }
+    
+    public func context(_ context: SEGContext, next: @escaping ((SEGContext) -> Void)) {
+        block(context, next)
+    }
+}
+
+@objc(SEGPlugin)
+public protocol ObjCPlugin {}
+
+public protocol ObjCPluginShim {
+    func instance() -> EventPlugin
+}
+
 internal class ObjCShimPlugin: Plugin, Subscriber {
     var type: PluginType = .enrichment
     var analytics: Analytics? = nil
-    var executionBlock: (([String: Any]?) -> [String: Any]?)? = nil
+    var executionBlock: ((SEGContext, (@escaping (SEGContext) -> Void)) -> Void)? = nil
+    let object: SEGMiddleware?
+    var shouldDrop: Bool = true
     
-    required init(middleware: @escaping ([String: Any]?) -> [String: Any]?) {
+    init(middleware: SEGMiddleware) {
+        object = middleware
+        executionBlock = object?.context(_:next:)
+    }
+    
+    required init(middleware: @escaping (SEGContext, (@escaping (SEGContext) -> Void)) -> Void) {
+        object = nil
         executionBlock = middleware
     }
     
+    internal func next(_ context: SEGContext) {
+        shouldDrop = false
+    }
+    
     func execute<T>(event: T?) -> T? where T : RawEvent {
-        // is our event actually valid?
+        guard let a = analytics else { return event }
         guard let event = event else { return event }
-        // do we actually have an execution block?
         guard let executionBlock = executionBlock else { return event }
-        // can we conver this to a JSON dictionary?
-        guard let dictEvent = try? JSON(with: event).dictionaryValue else { return event }
-        // is it valid json?
-        guard JSONSerialization.isValidJSONObject(dictEvent as Any) == true else { return event }
-        // run the execution block, a nil result tells us to drop the event.
-        guard let result = executionBlock(dictEvent) else { return nil }
         
-        if let jsonData = try? JSONSerialization.data(withJSONObject: result, options: .prettyPrinted) {
-            let decoder = JSONDecoder()
-            var newEvent: RawEvent? = nil
-            switch event {
-                case is IdentifyEvent:
-                    newEvent = try? decoder.decode(IdentifyEvent.self, from: jsonData)
-                case is TrackEvent:
-                    newEvent = try? decoder.decode(TrackEvent.self, from: jsonData)
-                case is ScreenEvent:
-                    newEvent = try? decoder.decode(ScreenEvent.self, from: jsonData)
-                case is AliasEvent:
-                    newEvent = try? decoder.decode(AliasEvent.self, from: jsonData)
-                case is GroupEvent:
-                    newEvent = try? decoder.decode(GroupEvent.self, from: jsonData)
-                default:
-                    break
-            }
-            // return the decoded event ...
-            return newEvent as? T
-        } else {
-            // we weren't able to serialize, so return the original event.
-            return event
-        }
+        let context = SEGContext(analytics: ObjCAnalytics(wrapping: a), event: event)
+        executionBlock(context, next)
+
+        let payload = context.payload as? SEGIdentifyPayload
+        let typedPayload = payload?.rawEvent as? T
+        return typedPayload
     }
 }
 
@@ -81,7 +94,7 @@ extension ObjCAnalytics {
     ///
     /// - Parameter middleware: The middleware to execute at the source level.
     @objc(addSourceMiddleware:)
-    public func addSourceMiddleware(middleware: @escaping ((_ event: [String: Any]?) -> [String: Any]?)) {
+    public func addSourceMiddleware(middleware: SEGMiddleware) {
         analytics.add(plugin: ObjCShimPlugin(middleware: middleware))
     }
     
@@ -107,7 +120,7 @@ extension ObjCAnalytics {
     ///   - middleware: The middleware to execute at the source level.
     ///   - destinationKey: A string value representing the destination.  ie: @"Amplitude"
     @objc(addDestinationMiddleware:forKey:)
-    public func addDestinationMiddleware(middleware: @escaping ((_ event: [String: Any]?) -> [String: Any]?), destinationKey: String) {
+    public func addDestinationMiddleware(middleware: SEGMiddleware, destinationKey: String) {
         // couldn't find the destination they wanted
         guard let dest = analytics.find(key: destinationKey) else { return }
         _ = dest.add(plugin: ObjCShimPlugin(middleware: middleware))

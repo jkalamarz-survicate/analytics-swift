@@ -15,7 +15,7 @@ let package = Package(
         // Products define the executables and libraries a package produces, and make them visible to other packages.
         .library(
             name: "Segment",
-            targets: ["Segment"]),
+            targets: ["Segment", "SegmentObjC"]),
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
@@ -32,6 +32,10 @@ let package = Package(
         .target(
             name: "Segment",
             dependencies: ["Sovran"]),
+        .target(
+            name: "SegmentObjC",
+            dependencies: ["Segment"],
+            publicHeadersPath: "include"),
         .testTarget(
             name: "Segment-Tests",
             dependencies: ["Segment"]),

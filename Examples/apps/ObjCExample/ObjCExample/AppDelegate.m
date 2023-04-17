@@ -8,7 +8,7 @@
 #import "AppDelegate.h"
 #import "ObjCExample-Swift.h"
 
-@import Segment;
+@import SegmentObjC;
 @import SegmentMixpanel;
 
 @interface AppDelegate ()
@@ -33,17 +33,48 @@
     SEGTestDestination *testDestination = [[SEGTestDestination alloc] init];
     [self.analytics addPlugin:testDestination];
     
-    [self.analytics addSourceMiddleware:^NSDictionary<NSString *,id> * _Nullable(NSDictionary<NSString *,id> * _Nullable event) {
-        // drop all events named booya
-        NSString *eventType = event[@"type"];
-        if ([eventType isEqualToString:@"track"]) {
-            NSString *eventName = event[@"event"];
-            if ([eventName isEqualToString:@"booya"]) {
-                return nil;
-            }
+    SEGBlockMiddleware *customizeAllTrackCalls = [[SEGBlockMiddleware alloc] initWithBlock:^(SEGContext * _Nonnull context, SEGMiddlewareNext  _Nonnull next) {
+        if ([context.payload isKindOfClass:[SEGTrackPayload class]]) {
+            SEGTrackPayload *track = (SEGTrackPayload *)context.payload;
+            next([context modify:^(SEGMutableContext * _Nonnull ctx) {
+                NSString *newEvent = [NSString stringWithFormat:@"[New] %@", track.event];
+                NSMutableDictionary *newProps = (track.properties != nil) ? [track.properties mutableCopy] : [@{} mutableCopy];
+                newProps[@"customAttribute"] = @"Hello";
+                ctx.payload = [[SEGTrackPayload alloc] initWithEvent:newEvent
+                                                          properties:newProps
+                                                             context:track.context
+                                                        integrations:track.integrations];
+            }]);
+        } else {
+            next(context);
         }
-        return event;
     }];
+    
+    [self.analytics addSourceMiddleware: customizeAllTrackCalls];
+    
+        
+    /*
+    [self.analytics addSourceMiddleware:^NSDictionary<NSString *,id> * _Nullable(NSDictionary<NSString *,id> * _Nullable event) {
+        NSMutableDictionary<NSString *, id> *newEvent = [event mutableCopy];
+        if (event.seg_eventType == SEGEventTypeTrack) {
+            newEvent[@"event"] = [NSString stringWithFormat:@"[New] \%@", event[@"event"]];
+            NSMutableDictionary *newProps = ([event[@"properties"] mutableCopy] ?: [NSMutableDictionary new]);
+            newProps[@"customAttribute"] = @"Hello";
+            newEvent[@"properties"] = newProps;
+        }
+        return newEvent;
+    }];
+    
+    [self.analytics addDestinationMiddleware:^NSDictionary<NSString *,id> * _Nullable(NSDictionary<NSString *,id> * _Nullable event) {
+        NSMutableDictionary<NSString *, id> *newEvent = [event mutableCopy];
+        if (event.seg_eventType == SEGEventTypeTrack) {
+            newEvent[@"event"] = [NSString stringWithFormat:@"[Amplitude] \%@", event[@"event"]];
+            NSMutableDictionary *newProps = ([event[@"properties"] mutableCopy] ?: [NSMutableDictionary new]);
+            newProps[@"customAttribute"] = @"Hello";
+            newEvent[@"properties"] = newProps;
+        }
+        return newEvent;
+    } forKey: @"Amplitude"];*/
     
     //[self.analytics addDestination:[[SEGMixpanelDestination alloc] init]];
     
